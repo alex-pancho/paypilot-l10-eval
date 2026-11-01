@@ -3,7 +3,8 @@
 
 Запуск у контейнері з кореня репозиторію (де лежать judge.py і sets/):
   docker compose run --rm --entrypoint python eval tools/calibrate_run.py l09_labels
-  (JUDGE_MODEL у .env; необов'язково: RUNS=5, TEMP=0.7, GROUP_BY_DISPUTED=1)
+  (JUDGE_MODEL у .env; необов'язково: RUNS=5, TEMP=0.7, GROUP_BY_DISPUTED=1;
+   L10: JUDGE_FORMAT=schema|json|none для локального судді, див. judge.py)
 
 Чому не runner.py: для assertion "judge" ранер судить свіжу відповідь агента на `input`
 і бере лише останній з runs. Тут судиться саме `answer_under_test`.
@@ -35,6 +36,10 @@ def main():
     model = os.environ.get("JUDGE_MODEL", "")
     if not model or model == "not-used":
         sys.exit("JUDGE_MODEL не задано (див. .env)")
+    if not path.exists():
+        sys.exit(f"Немає sets/{name}.jsonl. Це ваш розмічений набір: скопіюйте "
+                 f"sets/{name}.lab.jsonl у sets/{name}.jsonl і поставте label кожному кейсу "
+                 f"(крок 3 лабораторної), тоді запускайте скрипт.")
     cases = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()
              if l.strip() and not l.startswith("//")]
     cases = [c for c in cases if c["additional_metadata"].get("assertion") == "judge"]
@@ -43,12 +48,21 @@ def main():
         sys.exit(f"немає label (розмітьте набір до прогону судді): {missing}")
 
     rows = []
+    t_start = time.time()
+    n_calls = n_err = n_quote = 0
     for c in cases:
         m = c["additional_metadata"]
         vs, quotes = [], []
         for _ in range(runs):
-            r = judge(c["input"], c["answer_under_test"], m["rubric"], model, temp)
+            n_calls += 1
+            try:
+                r = judge(c["input"], c["answer_under_test"], m["rubric"], model, temp)
+            except ValueError as e:   # судья не повернув валідний JSON / бінарний вердикт
+                r = {"verdict": "ERROR", "quote": "", "error": str(e)[:120]}
+                n_err += 1
             vs.append(r["verdict"]); quotes.append(r["quote"])
+            if r["quote"] and r["quote"] in c["answer_under_test"]:
+                n_quote += 1
         major = Counter(vs).most_common(1)[0][0]
         rows.append({"id": c["id"], "label": m["label"], "disputed": bool(m.get("disputed")),
                      "verdicts": vs, "majority": major, "stable": len(set(vs)) == 1,
@@ -70,11 +84,16 @@ def main():
     for g, (k, t) in sorted(groups.items()):
         print(f"  {g:<16} збіглося {k} з {t}")
 
+    elapsed = time.time() - t_start
+    print(f"\nчас прогону: {elapsed:.0f} с; середній виклик: {elapsed / n_calls:.1f} с ({n_calls} викликів)")
+    print(f"цитата знайдена у відповіді: {n_quote} з {n_calls} викликів; відповідей без валідного JSON (ERROR): {n_err}")
     out = {"set": name, "set_hash": hashlib.sha256(path.read_bytes()).hexdigest()[:12],
            "judge_model": model, "temperature": temp, "runs": runs,
            "ran_at": datetime.now(timezone.utc).isoformat(),
            "self_consistency": [stable, n], "agreement": [agree, n],
-           "agreement_wilson": [round(lo, 3), round(hi, 3)], "cases": rows}
+           "agreement_wilson": [round(lo, 3), round(hi, 3)], "elapsed": round(elapsed, 1),
+           "t_call_mean": round(elapsed / n_calls, 2), "errors": n_err,
+           "quote_found": [n_quote, n_calls], "cases": rows}
     rep = ROOT / "reports"; rep.mkdir(exist_ok=True)
     f = rep / f"calibration-{name}-{time.strftime('%Y%m%dT%H%M%S')}.json"
     f.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")

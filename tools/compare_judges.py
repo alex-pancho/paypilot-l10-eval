@@ -17,7 +17,8 @@ for r in (a, b):
     sc = r["self_consistency"]
     passes = sum(c["majority"] == "PASS" for c in r["cases"])
     print(f'{r["judge_model"]:<28} узгодженість {k}/{n} = {p:.2f} ({lo:.2f}–{hi:.2f}, ±{h:.2f}); '
-          f'самоузгодженість {sc[0]}/{sc[1]}; більшість PASS: {passes}/{n}; temp={r["temperature"]}')
+          f'самоузгодженість {sc[0]}/{sc[1]}; більшість PASS: {passes}/{n}; temp={r["temperature"]}'
+          + (f'; час {r["elapsed"]:.0f} с ({r["t_call_mean"]} с/виклик)' if "elapsed" in r else ""))
 (pa, loa, hia, _), (pb, lob, hib, _) = (wilson(*r["agreement"]) for r in (a, b))
 overlap = max(loa, lob) <= min(hia, hib)
 print("інтервали перекриваються: судді за цим набором НЕ розрізняються" if overlap

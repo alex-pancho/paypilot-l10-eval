@@ -21,6 +21,19 @@ Reply with ONE line of JSON and nothing else:
 `quote` must be copied from the answer character for character. If nothing in
 the answer supports the verdict, use an empty quote."""
 
+# Схема виходу судді (L10, JUDGE_FORMAT=schema). `trigger` лишається рядком: той самий
+# суддя читає рубрики з різними тригерами (ескалація, D25 тощо).
+VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "trigger": {"type": "string"},
+        "evidence_turn": {"type": "integer"},
+        "quote": {"type": "string"},
+    },
+    "required": ["verdict", "trigger", "evidence_turn", "quote"],
+}
+
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -66,11 +79,19 @@ def _ollama(prompt: str, model: str, temperature: float | None) -> str:
     ""
     base = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
     model = model.removeprefix("ollama:")
-    payload = json.dumps({
-        "model": model, "stream": False, "format": "json",
+    body = {
+        "model": model, "stream": False,
         "options": {"temperature": 0 if temperature is None else temperature},
         "system": SYSTEM, "prompt": prompt,
-    }).encode("utf-8")
+    }
+    # JUDGE_FORMAT (L10): json (за замовчуванням, як було) | schema | none
+    fmt = os.environ.get("JUDGE_FORMAT", "json")
+    if fmt == "schema":
+        body["format"] = VERDICT_SCHEMA      # декодер обмежує вихід схемою
+    elif fmt == "json":
+        body["format"] = "json"              # лише «валідний JSON», без схеми
+    # fmt == "none": без format, форму тримає тільки промпт
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         base.rstrip("/") + "/api/generate", data=payload,
         headers={"Content-Type": "application/json"})
