@@ -49,7 +49,7 @@ def main():
 
     rows = []
     t_start = time.time()
-    n_calls = n_err = n_quote = 0
+    n_calls = n_err = n_quote = n_nonempty = 0
     for c in cases:
         m = c["additional_metadata"]
         vs, quotes = [], []
@@ -57,12 +57,16 @@ def main():
             n_calls += 1
             try:
                 r = judge(c["input"], c["answer_under_test"], m["rubric"], model, temp)
-            except ValueError as e:   # судья не повернув валідний JSON / бінарний вердикт
-                r = {"verdict": "ERROR", "quote": "", "error": str(e)[:120]}
+            except (ValueError, OSError, RuntimeError) as e:
+                # не валідний JSON / не бінарний вердикт / таймаут чи обрив з'єднання з моделлю
+                r = {"verdict": "ERROR", "quote": "", "error": f"{type(e).__name__}: {e}"[:120]}
+                print(f'  ! {c["id"]}: {r["error"]}')
                 n_err += 1
             vs.append(r["verdict"]); quotes.append(r["quote"])
-            if r["quote"] and r["quote"] in c["answer_under_test"]:
-                n_quote += 1
+            if r["quote"]:
+                n_nonempty += 1
+                if r["quote"] in c["answer_under_test"]:
+                    n_quote += 1
         major = Counter(vs).most_common(1)[0][0]
         rows.append({"id": c["id"], "label": m["label"], "disputed": bool(m.get("disputed")),
                      "verdicts": vs, "majority": major, "stable": len(set(vs)) == 1,
@@ -86,14 +90,16 @@ def main():
 
     elapsed = time.time() - t_start
     print(f"\nчас прогону: {elapsed:.0f} с; середній виклик: {elapsed / n_calls:.1f} с ({n_calls} викликів)")
-    print(f"цитата знайдена у відповіді: {n_quote} з {n_calls} викликів; відповідей без валідного JSON (ERROR): {n_err}")
+    print(f"цитата: знайдена у відповіді {n_quote} з {n_nonempty} непорожніх; порожніх {n_calls - n_err - n_nonempty} "
+          f"(так буває, коли вердикт спирається на відсутність чогось); викликів з помилкою (ERROR): {n_err}")
     out = {"set": name, "set_hash": hashlib.sha256(path.read_bytes()).hexdigest()[:12],
            "judge_model": model, "temperature": temp, "runs": runs,
            "ran_at": datetime.now(timezone.utc).isoformat(),
            "self_consistency": [stable, n], "agreement": [agree, n],
            "agreement_wilson": [round(lo, 3), round(hi, 3)], "elapsed": round(elapsed, 1),
            "t_call_mean": round(elapsed / n_calls, 2), "errors": n_err,
-           "quote_found": [n_quote, n_calls], "cases": rows}
+           "quote_found": [n_quote, n_nonempty], "quote_empty": n_calls - n_err - n_nonempty,
+           "cases": rows}
     rep = ROOT / "reports"; rep.mkdir(exist_ok=True)
     f = rep / f"calibration-{name}-{time.strftime('%Y%m%dT%H%M%S')}.json"
     f.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")

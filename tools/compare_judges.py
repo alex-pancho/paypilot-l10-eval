@@ -12,6 +12,9 @@ def wilson(k, n, z=1.96):
     return p, c-h, c+h, h
 
 a, b = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+if a.get("set") != b.get("set") or a.get("set_hash") != b.get("set_hash"):
+    sys.exit(f'Звіти з різних наборів ({a.get("set")} / {b.get("set")}) або різних версій одного набору: '
+             'порівнювати суддів можна лише на одному й тому самому наборі.')
 for r in (a, b):
     k, n = r["agreement"]; p, lo, hi, h = wilson(k, n)
     sc = r["self_consistency"]

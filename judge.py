@@ -84,6 +84,11 @@ def _ollama(prompt: str, model: str, temperature: float | None) -> str:
         "options": {"temperature": 0 if temperature is None else temperature},
         "system": SYSTEM, "prompt": prompt,
     }
+    # JUDGE_MAX_TOKENS: необов'язкове обмеження довжини відповіді. За замовчуванням його немає:
+    # моделі з «міркуванням» (gpt-oss та ін.) витрачають частину бюджету на приховані токени,
+    # і жорсткий ліміт дає порожню відповідь.
+    if os.environ.get("JUDGE_MAX_TOKENS"):
+        body["options"]["num_predict"] = int(os.environ["JUDGE_MAX_TOKENS"])
     # JUDGE_FORMAT (L10): json (за замовчуванням, як було) | schema | none
     fmt = os.environ.get("JUDGE_FORMAT", "json")
     if fmt == "schema":
@@ -95,8 +100,14 @@ def _ollama(prompt: str, model: str, temperature: float | None) -> str:
     req = urllib.request.Request(
         base.rstrip("/") + "/api/generate", data=payload,
         headers={"Content-Type": "application/json"})
-    with _opener.open(req, timeout=180) as r:
-        return json.loads(r.read().decode("utf-8")).get("response", "")
+    with _opener.open(req, timeout=int(os.environ.get("JUDGE_TIMEOUT", "180"))) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    text = data.get("response", "")
+    if not text.strip():
+        raise ValueError(f"judge returned an empty response (done_reason={data.get('done_reason')!r}, "
+                         f"thinking={'yes' if data.get('thinking') else 'no'}); "
+                         "see JUDGE_MAX_TOKENS / JUDGE_FORMAT in the README")
+    return text
 
 
 def _parse(raw: str) -> dict:
